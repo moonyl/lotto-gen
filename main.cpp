@@ -3,6 +3,8 @@
 #include <sstream>
 #include <json/json.h>
 #include <leveldb/db.h>
+#include <thread>
+#include <chrono>
 
 using std::string;
 using std::cout;
@@ -10,69 +12,80 @@ using std::cerr;
 using std::endl;
 using std::ostringstream;
 
-int main()
-{
-    // RAII cleanup
+string makeLottoUrl(int i) {
+    static string baseUrl("http://www.nlotto.co.kr/common.do?method=getLottoNumber&drwNo=");
 
-    curlpp::Cleanup myCleanup;
+    std::ostringstream numUrl;
+    numUrl << baseUrl << i;
 
-    // Send request and get a result.
-    // Here I use a shortcut to get it in a string stream ...
+    return numUrl.str();
+}
 
+string getHttpResponse(const string& url)   {
     std::ostringstream os;
 
-    //os << curlpp::options::Url(string("http://www.nlotto.co.kr/common.do?method=getLottoNumber&drwNo=3"));
-    os << curlpp::options::Url("http://www.nlotto.co.kr/common.do?method=getLottoNumber&drwNo=3");
-    string asAskedInQuestion = os.str();
-    std::cout << asAskedInQuestion << std::endl;
+    try {
+        os << curlpp::options::Url(url);
+    } catch ( curlpp::LogicError & e ) 	{
+        std::cout << e.what() << std::endl;
+    } catch ( curlpp::RuntimeError & e )  {
+        std::cout << e.what() << std::endl;
+    }
 
+    return os.str();
+}
+
+Json::Value toJsonValue(const string& strJson) {
     Json::Value lottoJson;
-    std::istringstream strStream(asAskedInQuestion);
+    std::istringstream strStream(strJson);
     strStream >> lottoJson;
+    return lottoJson;
+}
 
-    std::cout << lottoJson << std::endl;
-
-    std::cout << "check element" << std::endl;
-    std::cout << lottoJson["drwtNo1"] << std::endl;
-    std::cout << lottoJson["drwtNo1"].asUInt() << std::endl;
-
-    //auto no1 = root["drwtNo1"];
-    //std::cout << typeid(no1).name() << std::endl;
-
+leveldb::DB* openLottoDb()
+{
     leveldb::DB* db;
     leveldb::Options options;
     options.create_if_missing = true;
 
-    leveldb::Status status = leveldb::DB::Open(options, "./testdb", &db);
+    leveldb::Status status = leveldb::DB::Open(options, "./lottodb", &db);
 
     if (false == status.ok())
     {
-        cerr << "Unable to open/create test database './testdb'" << endl;
+        cerr << "Unable to open/create test database './lottodb'" << endl;
         cerr << status.ToString() << endl;
-        return -1;
+        return nullptr;
     }
+    return db;
+}
 
-    // Add 256 values to the database
+void writeLottoData(leveldb::DB* db, int index, const Json::Value &lottoJson)
+{
     leveldb::WriteOptions writeOptions;
-    //for (unsigned int i = 0; i < 256; ++i)
-    //{
-        ostringstream keyStream;
-        //keyStream << "Key" << i;
-        keyStream << 0;
 
-        ostringstream valueStream;
-        valueStream << lottoJson;
+    ostringstream keyStream;
 
-        db->Put(writeOptions, keyStream.str(), valueStream.str());
-    //}
+    keyStream << index;
 
+    ostringstream valueStream;
+    valueStream << lottoJson;
+
+    db->Put(writeOptions, keyStream.str(), valueStream.str());
+}
+
+void printAllData(leveldb::DB* db)
+{
     // Iterate over each item in the database and print them
     leveldb::Iterator* it = db->NewIterator(leveldb::ReadOptions());
 
+    int total = 0;
     for (it->SeekToFirst(); it->Valid(); it->Next())
     {
-        cout << it->key().ToString() << " : " << it->value().ToString() << endl;
+        //cout << it->key().ToString() << " : " << it->value().ToString() << endl;
+        ++total;
     }
+
+    cout << "total count : " << total << std::endl;
 
     if (false == it->status().ok())
     {
@@ -81,6 +94,39 @@ int main()
     }
 
     delete it;
+}
+
+int main()
+   {
+    // RAII cleanup
+
+    curlpp::Cleanup myCleanup;
+
+    // Send request and get a result.
+    // Here I use a shortcut to get it in a string stream ...
+
+
+    leveldb::DB* db = openLottoDb();
+    // TODO : to 828 collect data
+
+    for (int i = 1; i <= 828; i++) {
+        string asAskedInQuestion = getHttpResponse(makeLottoUrl(i));
+        if (asAskedInQuestion.empty()) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            --i;
+            continue;
+        }
+
+        Json::Value lottoJson = toJsonValue(asAskedInQuestion);
+
+//        std::cout << lottoJson << std::endl;
+//        std::cout << "check element" << std::endl;
+//        std::cout << lottoJson["drwtNo1"].asUInt() << std::endl;
+
+        writeLottoData(db, i, lottoJson);
+    }
+
+    printAllData(db);
 
     // Close the database
     delete db;
