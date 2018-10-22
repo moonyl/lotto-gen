@@ -73,19 +73,44 @@ void writeLottoData(leveldb::DB* db, int index, const Json::Value &lottoJson)
     db->Put(writeOptions, keyStream.str(), valueStream.str());
 }
 
+#include <set>
+std::set<uint> toSixNums(const Json::Value& json) {
+    std::set<uint> result;
+    result.insert(json["drwtNo1"].asUInt());
+    result.insert(json["drwtNo2"].asUInt());
+    result.insert(json["drwtNo3"].asUInt());
+    result.insert(json["drwtNo4"].asUInt());
+    result.insert(json["drwtNo5"].asUInt());
+    result.insert(json["drwtNo6"].asUInt());
+    return result;
+}
+
+void handleBlacklist(const std::set<std::set<uint>> &setOfSixNumSet) {
+    // TODO : store db
+}
+
 void printAllData(leveldb::DB* db)
 {
     // Iterate over each item in the database and print them
     leveldb::Iterator* it = db->NewIterator(leveldb::ReadOptions());
 
     int total = 0;
+    std::set<std::set<uint>> setOfSixNumSet;
     for (it->SeekToFirst(); it->Valid(); it->Next())
     {
         //cout << it->key().ToString() << " : " << it->value().ToString() << endl;
+        auto value = it->value().ToString();
+        //cout << typeid(value).name() << endl;
+        //cout << typeid(value).name() << endl;
+        auto json = toJsonValue(value);
+        //uint no1 = json["drwtNo1"].asUInt();
+        auto numbers = toSixNums(json);
+        setOfSixNumSet.insert(numbers);
         ++total;
     }
 
-    cout << "total count : " << total << std::endl;
+    //cout << "total count : " << total << std::endl;
+    cout << "total count : " << setOfSixNumSet.size() << std::endl;
 
     if (false == it->status().ok())
     {
@@ -94,6 +119,10 @@ void printAllData(leveldb::DB* db)
     }
 
     delete it;
+
+    if (total == setOfSixNumSet.size()) {
+        handleBlackList(setOfSixNumSet);
+    }
 }
 
 int main()
@@ -106,24 +135,27 @@ int main()
     // Here I use a shortcut to get it in a string stream ...
 
 
+
     leveldb::DB* db = openLottoDb();
-    // TODO : to 828 collect data
 
-    for (int i = 1; i <= 828; i++) {
-        string asAskedInQuestion = getHttpResponse(makeLottoUrl(i));
-        if (asAskedInQuestion.empty()) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            --i;
-            continue;
+    bool shouldServerUpdate = false;
+    if (shouldServerUpdate == true) {
+        for (int i = 1; i <= 828; i++) {
+            string asAskedInQuestion = getHttpResponse(makeLottoUrl(i));
+            if (asAskedInQuestion.empty()) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                --i;
+                continue;
+            }
+
+            Json::Value lottoJson = toJsonValue(asAskedInQuestion);
+
+    //        std::cout << lottoJson << std::endl;
+    //        std::cout << "check element" << std::endl;
+    //        std::cout << lottoJson["drwtNo1"].asUInt() << std::endl;
+
+            writeLottoData(db, i, lottoJson);
         }
-
-        Json::Value lottoJson = toJsonValue(asAskedInQuestion);
-
-//        std::cout << lottoJson << std::endl;
-//        std::cout << "check element" << std::endl;
-//        std::cout << lottoJson["drwtNo1"].asUInt() << std::endl;
-
-        writeLottoData(db, i, lottoJson);
     }
 
     printAllData(db);
